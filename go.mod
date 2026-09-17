@@ -1,4 +1,4 @@
-module github.com/christhomas/notionmd-cli
+module github.com/antimatter-studios/mdnotion
 
 go 1.24.4
 

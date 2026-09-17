@@ -31,3 +31,6 @@ dist
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# the built binary
+/mdnotion

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -9,7 +8,6 @@ import (
 
 	"github.com/spf13/pflag"
 
-	"github.com/brittonhayes/notionmd"
 	"github.com/dstotijn/go-notion"
 )
 
@@ -18,19 +16,18 @@ var (
 	Version      = "dev"
 )
 
-// PageMetadata is the metadata stored in the code block
-type PageMetadata struct {
-	ContentHash string `json:"content_hash"`
-}
-
 func main() {
 	var (
 		token        string
-		pageID       string
+		pageRef      string
 		mdPath       string
+		parentRef    string
+		title        string
+		manifestPath string
+		paramFlags   []string
 		appendF      bool
 		replaceF     bool
-		useHash      bool
+		force        bool
 		hashProperty string
 		rewriteText  string
 		dryRun       bool
@@ -38,14 +35,18 @@ func main() {
 		version      bool
 	)
 	pflag.StringVar(&token, "token", "", "Notion integration token")
-	pflag.StringVar(&pageID, "page", "", "Target Notion page ID")
+	pflag.StringVar(&pageRef, "page", "", "Target Notion page: an ID or a title path like 'Wiki/Docs/Setup' (\\/ escapes a literal slash). Relative to --parent when both are given; must exist when given alone")
 	pflag.StringVar(&mdPath, "md", "", "Path to markdown file")
-	pflag.BoolVar(&appendF, "append", false, "Append content to the bottom of the existing page (default)")
-	pflag.BoolVar(&replaceF, "replace", false, "Replace all existing content with new content")
-	pflag.BoolVar(&useHash, "use-hash", false, "Store and check content hash in a dedicated metadata block and/or property.")
-	pflag.StringVar(&hashProperty, "hash-property", "", "Optionally specify property name for content hash, e.g. --hash-property=MyPropName")
+	pflag.StringVar(&parentRef, "parent", "", "Page (ID or title path) below which the target is found or created. The parent itself must exist; everything below it may be created")
+	pflag.StringVar(&title, "title", "", "Title of the page below --parent (default: the document's first H1, then the file name)")
+	pflag.StringVar(&manifestPath, "manifest", "", "JSON manifest publishing a set of documents (see README)")
+	pflag.StringArrayVar(&paramFlags, "param", nil, "Value for {{name}} placeholders, as name=value (repeatable)")
+	pflag.BoolVar(&appendF, "append", false, "Append content to the bottom of the page instead of replacing it (non-idempotent: the content hash check does not apply)")
+	pflag.BoolVar(&replaceF, "replace", false, "Replace the page content (the default; flag kept for compatibility)")
+	pflag.BoolVar(&force, "force", false, "Publish even when the content hash says nothing changed")
+	pflag.StringVar(&hashProperty, "hash-property", "", "Property name storing the content hash on database rows (default 'Content Hash')")
 	pflag.StringVar(&rewriteText, "rewrite-text", "", "Path to JSON file mapping links to rewrite in the markdown file")
-	pflag.BoolVar(&dryRun, "dry-run", false, "Run all logic except Notion sync (no changes will be made to Notion)")
+	pflag.BoolVar(&dryRun, "dry-run", false, "Run all logic except Notion sync (no API calls are made at all)")
 	pflag.BoolVar(&debugFlag, "debug", false, "Enable debug output")
 	pflag.BoolVarP(&version, "version", "v", false, "Print version and exit")
 	pflag.Parse()
@@ -57,112 +58,143 @@ func main() {
 
 	debugEnabled = debugFlag
 
-	debugLog("Given: \n--token '%s' \n--page '%s' \n--md '%s' \n--append '%t' \n--replace '%t' \n--use-hash '%t' \n--hash-property '%s' \n--rewrite-text '%s'\n", token, pageID, mdPath, appendF, replaceF, useHash, hashProperty, rewriteText)
+	debugLog("Given: \n--token '%s' \n--page '%s' \n--md '%s' \n--parent '%s' \n--title '%s' \n--manifest '%s' \n--param %v \n--append '%t' \n--force '%t' \n--hash-property '%s' \n--rewrite-text '%s'\n",
+		token, pageRef, mdPath, parentRef, title, manifestPath, paramFlags, appendF, force, hashProperty, rewriteText)
 
-	if token == "" || pageID == "" || mdPath == "" || len(os.Args) == 1 {
+	if appendF && replaceF {
+		fatalUsage("Cannot use both --append and --replace flags at the same time.")
+	}
+
+	params, err := parseParams(paramFlags)
+	if err != nil {
+		fatal(err)
+	}
+
+	// {{param}} placeholders work in CLI references too, for scripting parity
+	// with manifests.
+	for _, ref := range []*string{&pageRef, &parentRef, &title} {
+		if *ref, err = applyTemplate(*ref, params); err != nil {
+			fatal(err)
+		}
+	}
+
+	syncOpts := SyncOptions{
+		Append:       appendF,
+		Force:        force,
+		HashProperty: hashProperty,
+		DryRun:       dryRun,
+	}
+
+	// Manifest mode: publish a set of documents.
+	if manifestPath != "" {
+		if token == "" {
+			fatalUsage("Manifest mode requires --token.")
+		}
+		if pageRef != "" || mdPath != "" || title != "" {
+			fatalUsage("Cannot mix --manifest with --page/--md/--title.")
+		}
+		if appendF {
+			fatalUsage("--append does not apply to manifests; manifest publishing replaces page content.")
+		}
+		notionClient := NewNotionClient(token)
+		if err := runManifest(notionClient, ManifestOptions{
+			Path:        manifestPath,
+			Parent:      parentRef,
+			Params:      params,
+			RewriteText: rewriteText,
+			Sync:        syncOpts,
+		}); err != nil {
+			fatal(err)
+		}
+		fmt.Println("✅ Manifest published successfully.")
+		return
+	}
+
+	// Single-page mode: publish one document to one page.
+	if token == "" || mdPath == "" || (pageRef == "" && parentRef == "") || len(os.Args) == 1 {
 		pflag.Usage()
 		os.Exit(1)
 	}
-
-	if appendF && replaceF {
-		fmt.Println("Cannot use both --append and --replace flags at the same time.")
-		os.Exit(1)
+	if pageRef != "" && parentRef != "" && looksLikePageID(pageRef) {
+		fatalUsage("--page is an ID, which is already absolute; --parent does not apply.")
+	}
+	if title != "" && parentRef == "" {
+		fatalUsage("--title only applies when creating below --parent.")
+	}
+	if title != "" && pageRef != "" {
+		fatalUsage("--title conflicts with --page; a page's title is its identity.")
 	}
 
-	printAppTitle(mdPath, replaceF, useHash, rewriteText)
+	printAppTitle(mdPath, syncOpts)
 
 	// Read the file contents
 	mdContent, err := os.ReadFile(mdPath)
 	if err != nil {
-		fmt.Println("Error reading markdown file:", err)
-		os.Exit(1)
+		fatal(fmt.Errorf("error reading markdown file: %w", err))
 	}
 
 	// Rewrite text if mapping is provided before conversion to notion blocks
 	if rewriteText != "" {
 		if mdContent, err = rewriteContent(mdContent, mdPath, rewriteText); err != nil {
-			fmt.Println(err)
-			os.Exit(1)
+			fatal(err)
 		}
 	}
 
-	// Initialize Notion client
 	notionClient := NewNotionClient(token)
 
-	// First convert markdown to Notion blocks
-	blocks, err := notionmd.Convert(string(mdContent))
-	if err != nil {
-		fmt.Println("Error converting markdown to Notion blocks:", err)
-		os.Exit(1)
+	pageTitlePath := title
+	if pageTitlePath == "" {
+		pageTitlePath = deriveTitle(mdPath, mdContent)
 	}
 
-	// Then process the blocks to handle images correctly
-	blocks, err = ProcessImageBlocks(blocks, mdPath, notionClient)
-	if err != nil {
-		fmt.Printf("Warning: failed to process images: %s\n", err)
-		os.Exit(1)
-	}
-
-	// Debug all block types
-	debugBlocks(blocks)
-
-	// --- content_hash optimization ---
-	// Compute hash of the input markdown file
-	hashBytes := sha256.Sum256(mdContent)
-	contentHash := fmt.Sprintf("%x", hashBytes[:])
-
-	// Validate blocks before sending to Notion
-	blocks = validateContentBlocks(blocks)
-	titleBlock, blocks := filterTitleBlock(blocks)
-	if titleBlock != nil {
-		err := notionClient.UpdatePageTitle(pageID, titleBlock)
+	var target node
+	switch {
+	case dryRun:
+		switch {
+		case pageRef != "" && parentRef == "":
+			fmt.Printf("[DRY RUN] Would resolve page '%s'\n", pageRef)
+			target = node{id: placeholderPageID(pageRef)}
+		case pageRef == "":
+			fmt.Printf("[DRY RUN] Would resolve parent '%s' and find or create '%s'\n", parentRef, pageTitlePath)
+			target = node{id: placeholderPageID(pageTitlePath)}
+		default:
+			fmt.Printf("[DRY RUN] Would resolve parent '%s' and find or create '%s'\n", parentRef, pageRef)
+			target = node{id: placeholderPageID(pageRef)}
+		}
+	case pageRef != "" && parentRef == "":
+		// Absolute target: the page must exist; nothing is ever created.
+		if target, err = resolveRef(notionClient, pageRef); err != nil {
+			fatal(err)
+		}
+	default:
+		// Everything up to and including the parent must exist; everything
+		// below it is found or created.
+		parent, err := resolveRef(notionClient, parentRef)
 		if err != nil {
-			fmt.Printf("Error updating page title: %s\n", err)
+			fatal(err)
+		}
+		path := pageRef
+		if path == "" {
+			path = pageTitlePath
+		}
+		if target, err = findOrCreatePath(notionClient, parent, path); err != nil {
+			fatal(err)
 		}
 	}
 
-	if dryRun {
-		fmt.Println("[DRY RUN] All parsing, conversion, and hash logic completed. No changes made to Notion.")
-		fmt.Printf("[MD CONTENT]\n%s\n\n", mdContent)
-		return
+	if err := syncPage(notionClient, target, mdPath, mdContent, syncOpts); err != nil {
+		fatal(err)
 	}
+}
 
-	// Checks the content hash property to see whether the content is different than that already published in notion
-	if useHash {
-		contentHashPropertyName := "Content Hash"
-		if hashProperty != "" {
-			contentHashPropertyName = hashProperty
-		}
-		propertyHash, err := notionClient.GetProperty(pageID, contentHashPropertyName)
-		if err != nil {
-			fmt.Printf("Error getting '%s' property: %s\n", contentHashPropertyName, err)
-			os.Exit(1)
-		}
-		fmt.Printf("Page hash (Property Name: '%s'): %s\n", contentHashPropertyName, propertyHash)
-		fmt.Printf("Content hash: %s\n", contentHash)
-		if propertyHash == contentHash {
-			fmt.Println("⚠️ No content change detected. Skipping update.")
-			os.Exit(0)
-		}
-		if err := notionClient.SetProperty(pageID, contentHashPropertyName, contentHash); err != nil {
-			fmt.Printf("Warning: failed to set '%s' property: %s\n", contentHashPropertyName, err)
-		}
-	}
+func fatal(err error) {
+	fmt.Println(err)
+	os.Exit(1)
+}
 
-	// If we are replacing all the content with new content, we need to clear all the existing content first
-	if replaceF {
-		if err := notionClient.ClearPageContent(pageID); err != nil {
-			fmt.Printf("Error clearing Notion page: %s\n", err)
-			os.Exit(1)
-		}
-	}
-
-	if err := notionClient.AddPageContent(pageID, blocks); err != nil {
-		fmt.Printf("Error updating Notion page: %s\n", err)
-		os.Exit(1)
-	}
-
-	fmt.Println("✅ Page updated successfully.")
+func fatalUsage(message string) {
+	fmt.Println(message)
+	os.Exit(1)
 }
 
 // rewriteContent applies rewrite-text mapping from a file to the markdown content.
@@ -207,28 +239,6 @@ func rewriteContent(mdContent []byte, mdPath, rewriteLink string) ([]byte, error
 func debugLog(format string, args ...interface{}) {
 	if debugEnabled {
 		fmt.Printf(format, args...)
-	}
-}
-
-func debugBlocks(blocks []notion.Block) {
-	// early dropout
-	if !debugEnabled {
-		return
-	}
-
-	debugLog("Found %d blocks after markdown conversion\n", len(blocks))
-	for i, block := range blocks {
-		debugLog("Block %d is of type: %T\n", i, block)
-
-		// Check specifically for code blocks
-		if codeBlock, ok := block.(*notion.CodeBlock); ok {
-			debugLog("Found code block at index %d\n", i)
-			if codeBlock.Language == nil {
-				debugLog("  Language is nil\n")
-			} else {
-				debugLog("  Language is '%s'\n", *codeBlock.Language)
-			}
-		}
 	}
 }
 
@@ -333,20 +343,4 @@ func validateContentBlocks(blocks []notion.Block) []notion.Block {
 		}
 	}
 	return patched
-}
-
-// printTitle prints a detailed operation title based on flags and arguments
-func printAppTitle(mdPath string, replaceF, useHash bool, rewriteText string) {
-	mode := "append"
-	if replaceF {
-		mode = "replace"
-	}
-	details := []string{"NotionMD Cli: Processing file '" + mdPath + "' using " + mode}
-	if useHash {
-		details = append(details, "content hash check enabled")
-	}
-	if rewriteText != "" {
-		details = append(details, "rewrite mapping: '"+rewriteText+"'")
-	}
-	fmt.Println("\n===== " + strings.Join(details, ", ") + " =====\n")
 }

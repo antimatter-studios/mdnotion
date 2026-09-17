@@ -1,10 +1,10 @@
-project_name: notionmd-cli
+project_name: mdnotion
 
 builds:
   - main: .
     goos: [linux, darwin, windows]
     goarch: [amd64, arm64]
-    binary: notionmd-cli
+    binary: mdnotion
     ldflags: -X main.Version={{.Version}} -s -w
 
 archives:
@@ -12,5 +12,5 @@ archives:
 
 release:
   github:
-    owner: christhomas
-    name: notionmd-cli
+    owner: antimatter-studios
+    name: mdnotion
