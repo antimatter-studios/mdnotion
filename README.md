@@ -34,15 +34,18 @@ Notion hierarchy is hardcoded anywhere.
 
 ## Single page (CLI mode)
 
+Set `NOTION_TOKEN` in the process environment, preferably through your secret
+manager. The examples below read it automatically.
+
 ```sh
 # update an existing page, wherever it lives (never creates)
-./mdnotion --token $NOTION_TOKEN --page "Engineering/Roadmap" --md roadmap.md
+./mdnotion --page "Engineering/Roadmap" --md roadmap.md
 
 # create-or-update a page below a parent; title from the md's first H1 (or --title)
-./mdnotion --token $NOTION_TOKEN --parent "Docs/v1.2" --md docs/installation.md
+./mdnotion --parent "Docs/v1.2" --md docs/installation.md
 
 # both: --page is a path relative to --parent, found or created below it
-./mdnotion --token $NOTION_TOKEN --parent "Docs/v1.2" --page "Guides/Installation" --md docs/installation.md
+./mdnotion --parent "Docs/v1.2" --page "Guides/Installation" --md docs/installation.md
 ```
 
 ## Sets of pages (manifest mode)
@@ -66,7 +69,7 @@ string field may contain `{{param}}` placeholders filled from `--param`.
 ```
 
 ```sh
-./mdnotion --token $NOTION_TOKEN --manifest docs.json \
+./mdnotion --manifest docs.json \
   --param parent="Engineering Wiki/Product Docs" \
   --param version="v1.2"
 ```
@@ -112,7 +115,9 @@ links pointing outside the published set. Links with anchors
 
 ## Flags
 
-- `--token` (required): Notion integration token
+- `NOTION_TOKEN`: Notion integration token, read from the environment
+- `--token`: optional override; command-line arguments can be visible in
+  process listings and shell history
 - `--page`: target page — ID or title path; relative to `--parent` when both
   are given, otherwise absolute and must exist
 - `--md`: path to the markdown file (single-page mode)
