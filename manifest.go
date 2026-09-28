@@ -146,6 +146,7 @@ type ManifestOptions struct {
 	Parent      string // CLI --parent, used when the manifest has no parent
 	Params      map[string]string
 	RewriteText string
+	Prune       bool
 	Sync        SyncOptions
 }
 
@@ -171,13 +172,13 @@ func runManifest(client *NotionClient, opts ManifestOptions) error {
 	// Phase 1: resolve every entry to a page. Entries with an absolute 'page'
 	// target are resolved read-only; everything else is found or created below
 	// its position. Dry-run prints the plan instead.
+	var parent node
 	if opts.Sync.DryRun {
 		if planNeedsParent(plan) {
 			fmt.Printf("[DRY RUN] Would resolve parent '%s'\n", parentRef)
 		}
 		printPlan(plan, 1)
 	} else {
-		var parent node
 		if planNeedsParent(plan) {
 			if parent, err = resolveRef(client, parentRef); err != nil {
 				return err
@@ -185,6 +186,25 @@ func runManifest(client *NotionClient, opts ManifestOptions) error {
 		}
 		if err := executePlan(client, plan, parent); err != nil {
 			return err
+		}
+	}
+	var orphans []orphanPage
+	if !opts.Sync.DryRun {
+		roots := []node{}
+		if planNeedsParent(plan) {
+			roots = append(roots, parent)
+		}
+		for _, n := range plan {
+			if n.page != "" {
+				roots = append(roots, n.target)
+			}
+		}
+		orphans, err = findOrphanPages(client, roots, flattenPlan(plan))
+		if err != nil {
+			return err
+		}
+		for _, orphan := range orphans {
+			fmt.Printf("Orphan: %s (%s)\n", orphan.title, notionPageURL(orphan.id))
 		}
 	}
 
@@ -206,6 +226,11 @@ func runManifest(client *NotionClient, opts ManifestOptions) error {
 
 		if err := syncPage(client, doc.target, doc.md, content, opts.Sync); err != nil {
 			return fmt.Errorf("error publishing '%s': %w", doc.md, err)
+		}
+	}
+	if opts.Prune && !opts.Sync.DryRun {
+		if err := pruneOrphanPages(client, orphans); err != nil {
+			return err
 		}
 	}
 

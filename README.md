@@ -102,6 +102,15 @@ Entry fields:
 A manifest needs a parent only if some entry is positioned relative to it;
 set `"parent"` in the manifest (typically templated) or pass `--parent`.
 
+After resolving the manifest, mdnotion reports pages under its managed
+parents that carry an mdnotion metadata block but are no longer in the plan.
+This catches pages left behind when a document is renamed or removed. The
+default only reports them. Pass `--prune` to move those pages to the trash
+*after* all current documents publish successfully. Pages without mdnotion
+metadata and databases are never pruned. If an orphan contains a page still
+in the plan, pruning stops rather than trashing that planned page. A dry run
+makes no API calls, so it cannot inspect remote pages for orphans.
+
 ### Cross-links between documents
 
 Relative markdown links between manifest documents (e.g. `(./building.md)`)
@@ -120,6 +129,7 @@ links pointing outside the published set. Links with anchors
 - `--title`: title of the page below `--parent` (default: first H1, then
   file name)
 - `--manifest`: JSON manifest publishing a set of documents
+- `--prune`: after a successful manifest publish, move reported orphan pages to the trash
 - `--param name=value`: fills `{{name}}` placeholders (repeatable; works in
   manifests and in CLI references)
 - `--append`: add content to the bottom instead of replacing (no hash check)

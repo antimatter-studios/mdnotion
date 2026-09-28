@@ -24,6 +24,7 @@ func main() {
 		parentRef    string
 		title        string
 		manifestPath string
+		prune        bool
 		paramFlags   []string
 		appendF      bool
 		replaceF     bool
@@ -40,6 +41,7 @@ func main() {
 	pflag.StringVar(&parentRef, "parent", "", "Page (ID or title path) below which the target is found or created. The parent itself must exist; everything below it may be created")
 	pflag.StringVar(&title, "title", "", "Title of the page below --parent (default: the document's first H1, then the file name)")
 	pflag.StringVar(&manifestPath, "manifest", "", "JSON manifest publishing a set of documents (see README)")
+	pflag.BoolVar(&prune, "prune", false, "Move orphaned mdnotion pages to the trash after a successful manifest publish")
 	pflag.StringArrayVar(&paramFlags, "param", nil, "Value for {{name}} placeholders, as name=value (repeatable)")
 	pflag.BoolVar(&appendF, "append", false, "Append content to the bottom of the page instead of replacing it (non-idempotent: the content hash check does not apply)")
 	pflag.BoolVar(&replaceF, "replace", false, "Replace the page content (the default; flag kept for compatibility)")
@@ -102,12 +104,16 @@ func main() {
 			Parent:      parentRef,
 			Params:      params,
 			RewriteText: rewriteText,
+			Prune:       prune,
 			Sync:        syncOpts,
 		}); err != nil {
 			fatal(err)
 		}
 		fmt.Println("✅ Manifest published successfully.")
 		return
+	}
+	if prune {
+		fatalUsage("--prune requires --manifest.")
 	}
 
 	// Single-page mode: publish one document to one page.
