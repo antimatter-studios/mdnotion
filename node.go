@@ -32,6 +32,9 @@ type node struct {
 	// row is true for pages that are rows of a database. Rows have custom
 	// properties (used for hash storage); plain pages do not.
 	row bool
+	// databaseID identifies a row's parent so a manifest can validate each
+	// database schema once before publishing any document.
+	databaseID string
 }
 
 // nodeFromID resolves a bare ID to a node, probing whether it is a page or a
@@ -40,7 +43,7 @@ func (c *NotionClient) nodeFromID(id string) (node, error) {
 	ctx := context.Background()
 	page, pageErr := c.NotionClient.FindPageByID(ctx, id)
 	if pageErr == nil {
-		return node{id: page.ID, kind: kindPage, row: page.Parent.Type == notion.ParentTypeDatabase}, nil
+		return node{id: page.ID, kind: kindPage, row: page.Parent.Type == notion.ParentTypeDatabase, databaseID: page.Parent.DatabaseID}, nil
 	}
 	if _, dbErr := c.NotionClient.FindDatabaseByID(ctx, id); dbErr == nil {
 		return node{id: id, kind: kindDatabase}, nil
@@ -66,7 +69,7 @@ func (c *NotionClient) searchNodesByTitle(title string) ([]node, error) {
 			switch obj := result.(type) {
 			case notion.Page:
 				if pageTitle(obj) == title {
-					matches = append(matches, node{id: obj.ID, kind: kindPage, row: obj.Parent.Type == notion.ParentTypeDatabase})
+					matches = append(matches, node{id: obj.ID, kind: kindPage, row: obj.Parent.Type == notion.ParentTypeDatabase, databaseID: obj.Parent.DatabaseID})
 				}
 			case notion.Database:
 				if richTextPlain(obj.Title) == title {
@@ -156,7 +159,7 @@ func (c *NotionClient) databaseRowsByTitle(databaseID, title string) ([]node, er
 		}
 		for _, row := range resp.Results {
 			if pageTitle(row) == title {
-				matches = append(matches, node{id: row.ID, kind: kindPage, row: true})
+				matches = append(matches, node{id: row.ID, kind: kindPage, row: true, databaseID: databaseID})
 			}
 		}
 		if !resp.HasMore || resp.NextCursor == nil || *resp.NextCursor == "" {
@@ -194,7 +197,11 @@ func (c *NotionClient) createChild(parent node, title string) (node, error) {
 	if err != nil {
 		return node{}, fmt.Errorf("failed to create page '%s' under %s %s: %w", title, parent.kind, parent.id, err)
 	}
-	return node{id: page.ID, kind: kindPage, row: row}, nil
+	databaseID := ""
+	if row {
+		databaseID = parent.id
+	}
+	return node{id: page.ID, kind: kindPage, row: row, databaseID: databaseID}, nil
 }
 
 // databaseTitleProperty returns the name of a database's title property.

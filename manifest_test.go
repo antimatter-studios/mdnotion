@@ -59,6 +59,20 @@ func TestLoadManifestNested(t *testing.T) {
 	}
 }
 
+func TestRowDatabasesChecksEachPublishedDatabaseOnce(t *testing.T) {
+	plan := []*planNode{
+		{md: "one.md", target: node{row: true, databaseID: "alpha"}},
+		{md: "two.md", target: node{row: true, databaseID: "alpha"}},
+		{md: "three.md", target: node{row: true, databaseID: "beta"}},
+		{target: node{row: true, databaseID: "unused"}},
+		{md: "plain.md", target: node{row: false}},
+	}
+	got := rowDatabases(plan)
+	if len(got) != 2 || got[0] != "alpha" || got[1] != "beta" {
+		t.Fatalf("rowDatabases = %v, want [alpha beta]", got)
+	}
+}
+
 func TestLoadManifestPageSet(t *testing.T) {
 	path := writeManifestFixture(t, `{
 		"pages": [

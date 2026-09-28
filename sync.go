@@ -95,7 +95,7 @@ func syncPage(client *NotionClient, target node, mdPath string, mdContent []byte
 
 	if !opts.Append && target.row {
 		if err := client.SetProperty(target.id, hashPropertyName(opts.HashProperty), contentHash); err != nil {
-			fmt.Printf("Warning: failed to store content hash: %s\n", err)
+			return fmt.Errorf("failed to store content hash on database row %s: %w", target.id, err)
 		}
 	}
 

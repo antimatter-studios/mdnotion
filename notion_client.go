@@ -232,16 +232,59 @@ func (c *NotionClient) GetProperty(pageID, propName string) (string, error) {
 	}
 	props, ok := page.Properties.(notion.DatabasePageProperties)
 	if !ok {
-		return "", nil
+		return "", fmt.Errorf("page %s has no database properties for content hash %q", pageID, propName)
 	}
+	database := page.Parent.DatabaseID
+	if _, exists := props[propName]; !exists || props[propName].Type != "rich_text" {
+		if db, lookupErr := c.NotionClient.FindDatabaseByID(ctx, database); lookupErr == nil {
+			if title := richTextPlain(db.Title); title != "" {
+				database = fmt.Sprintf("%s (%s)", title, database)
+			}
+		}
+	}
+	return contentHashProperty(props, propName, database)
+}
+
+// contentHashProperty distinguishes an empty value from a missing or mistyped
+// column. Only the former means a row has not been published by this tool yet.
+func contentHashProperty(props notion.DatabasePageProperties, propName, database string) (string, error) {
 	prop, ok := props[propName]
 	if !ok {
-		return "", nil
+		return "", fmt.Errorf("database %s is missing %q: add a rich_text property with that name before publishing", database, propName)
+	}
+	if prop.Type != "rich_text" {
+		return "", fmt.Errorf("database %s has %q as %s: change it to a rich_text property before publishing", database, propName, prop.Type)
 	}
 	if len(prop.RichText) > 0 {
 		return prop.RichText[0].PlainText, nil
 	}
 	return "", nil
+}
+
+// RequireHashProperty checks the database schema before a manifest starts
+// publishing rows. Missing columns are a configuration error, not an empty
+// hash on every row.
+func (c *NotionClient) RequireHashProperty(databaseID, propName string) error {
+	if databaseID == "" {
+		return fmt.Errorf("cannot validate %q: database ID is missing", propName)
+	}
+	db, err := c.NotionClient.FindDatabaseByID(context.Background(), databaseID)
+	if err != nil {
+		return fmt.Errorf("cannot inspect database %s for %q: %w", databaseID, propName, err)
+	}
+	return databaseHashProperty(db, propName)
+}
+
+func databaseHashProperty(db notion.Database, propName string) error {
+	label := fmt.Sprintf("%q (%s)", richTextPlain(db.Title), db.ID)
+	prop, ok := db.Properties[propName]
+	if !ok {
+		return fmt.Errorf("database %s is missing %q: add a rich_text property with that name before publishing", label, propName)
+	}
+	if prop.Type != "rich_text" {
+		return fmt.Errorf("database %s has %q as %s: change it to a rich_text property before publishing", label, propName, prop.Type)
+	}
+	return nil
 }
 
 // SetProperty sets a rich_text property on the Notion page
