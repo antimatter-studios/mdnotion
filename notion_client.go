@@ -37,10 +37,11 @@ type fileUploadResponse struct {
 }
 
 func NewNotionClient(token string) *NotionClient {
+	client := newNotionHTTPClient()
 	return &NotionClient{
 		NotionToken:  token,
-		NotionClient: notion.NewClient(token),
-		NotionHTTP:   NewNotionHTTP(token, "2022-06-28"),
+		NotionClient: notion.NewClient(token, notion.WithHTTPClient(client)),
+		NotionHTTP:   NewNotionHTTP(token, "2022-06-28", client),
 	}
 }
 
