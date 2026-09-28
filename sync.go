@@ -40,6 +40,7 @@ func syncPage(client *NotionClient, target node, mdPath string, mdContent []byte
 	if err != nil {
 		return fmt.Errorf("error converting markdown to Notion blocks: %w", err)
 	}
+	blocks = recoverCodeBlocks(mdContent, blocks)
 
 	// Image processing uploads files to Notion, so it is skipped in dry-run.
 	if !opts.DryRun {

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"reflect"
 	"strings"
 
 	"github.com/spf13/pflag"
@@ -242,29 +243,6 @@ func debugLog(format string, args ...interface{}) {
 	}
 }
 
-// mapLanguageToNotionCompatible maps common language identifiers to Notion-compatible values
-func mapLanguageToNotionCompatible(lang string) string {
-	langMap := map[string]string{
-		"sh":   "shell",
-		"bash": "bash",
-		"zsh":  "shell",
-		"js":   "javascript",
-		"ts":   "typescript",
-		"py":   "python",
-		"rb":   "ruby",
-		"cs":   "c#",
-		"cpp":  "c++",
-		"yml":  "yaml",
-		"text": "plain text",
-		"txt":  "plain text",
-	}
-
-	if mapped, ok := langMap[lang]; ok {
-		return mapped
-	}
-	return lang
-}
-
 // rewriteTextMap replaces markdown links according to the mapping
 func rewriteTextMap(content string, linkMap map[string]string) string {
 	fmt.Printf("Rewriting %d links:\n", len(linkMap))
@@ -310,10 +288,7 @@ func processCodeBlock(i int, codeBlock notion.CodeBlock) notion.CodeBlock {
 func validateContentBlocks(blocks []notion.Block) []notion.Block {
 	var patched []notion.Block
 	for i, block := range blocks {
-		// Convert pointer to non-pointer type
-		if _, ok := block.(*notion.CodeBlock); ok {
-			block = notion.CodeBlock(*block.(*notion.CodeBlock))
-		}
+		block = blockValue(block)
 
 		switch b := block.(type) {
 		case notion.BulletedListItemBlock:
@@ -335,12 +310,68 @@ func validateContentBlocks(blocks []notion.Block) []notion.Block {
 			}
 			patched = append(patched, b)
 		case notion.CodeBlock:
+			if len(b.Children) > 0 {
+				b.Children = validateContentBlocks(b.Children)
+			}
 			b = processCodeBlock(i, b)
 			patched = append(patched, b)
 		default:
-			// TODO: add more block type checks as needed
-			patched = append(patched, block)
+			patched = append(patched, validateBlockChildren(block))
 		}
 	}
 	return patched
+}
+
+// notionmd returns some blocks by pointer and others by value. Work with a
+// value copy so recursive patches are returned consistently for either form.
+func blockValue(block notion.Block) notion.Block {
+	value := reflect.ValueOf(block)
+	if value.IsValid() && value.Kind() == reflect.Pointer && !value.IsNil() {
+		if copy, ok := value.Elem().Interface().(notion.Block); ok {
+			return copy
+		}
+	}
+	return block
+}
+
+// validateBlockChildren visits every child-bearing block supported by the
+// pinned Notion client, not only lists. This also handles children supplied by
+// another converter or caller rather than by notionmd itself.
+func validateBlockChildren(block notion.Block) notion.Block {
+	switch b := block.(type) {
+	case notion.ParagraphBlock:
+		b.Children = validateContentBlocks(b.Children)
+		return b
+	case notion.QuoteBlock:
+		b.Children = validateContentBlocks(b.Children)
+		return b
+	case notion.ToggleBlock:
+		b.Children = validateContentBlocks(b.Children)
+		return b
+	case notion.TemplateBlock:
+		b.Children = validateContentBlocks(b.Children)
+		return b
+	case notion.ToDoBlock:
+		b.Children = validateContentBlocks(b.Children)
+		return b
+	case notion.CalloutBlock:
+		b.Children = validateContentBlocks(b.Children)
+		return b
+	case notion.ColumnBlock:
+		b.Children = validateContentBlocks(b.Children)
+		return b
+	case notion.TableBlock:
+		b.Children = validateContentBlocks(b.Children)
+		return b
+	case notion.SyncedBlock:
+		b.Children = validateContentBlocks(b.Children)
+		return b
+	case notion.ColumnListBlock:
+		for i := range b.Children {
+			b.Children[i] = validateBlockChildren(b.Children[i]).(notion.ColumnBlock)
+		}
+		return b
+	default:
+		return block
+	}
 }
