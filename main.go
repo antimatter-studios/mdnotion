@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/spf13/pflag"
@@ -213,20 +214,17 @@ func rewriteContent(mdContent []byte, mdPath, rewriteLink string) ([]byte, error
 	var multiPage map[string]map[string]string
 	if err := json.Unmarshal(data, &multiPage); err == nil {
 		debugLog("[DEBUG] Detected multi-page rewrite mapping. Searching for a matching page key in: %s\n", mdPath)
-		var (
-			matchedKey string
-			pageMap    map[string]string
-		)
-		for key, candidate := range multiPage {
-			if strings.Contains(mdPath, key) {
-				matchedKey = key
-				pageMap = candidate
-				break
-			}
+		keys := make([]string, 0, len(multiPage))
+		for key := range multiPage {
+			keys = append(keys, key)
 		}
-		if matchedKey != "" {
-			debugLog("[DEBUG] Found %d links for page key '%s' (matched in: %s)\n", len(pageMap), matchedKey, mdPath)
-			return []byte(rewriteTextMap(string(mdContent), pageMap)), nil
+		sortRewriteKeys(keys)
+		for _, key := range keys {
+			if strings.Contains(mdPath, key) {
+				pageMap := multiPage[key]
+				debugLog("[DEBUG] Found %d links for page key '%s' (matched in: %s)\n", len(pageMap), key, mdPath)
+				return []byte(rewriteTextMap(string(mdContent), pageMap)), nil
+			}
 		}
 		debugLog("[DEBUG] No mapping found for any key in '%s'. No rewrite applied.\n", mdPath)
 		return mdContent, nil // no mapping for this page, return original content
@@ -265,10 +263,27 @@ func mapLanguageToNotionCompatible(lang string) string {
 	return lang
 }
 
-// rewriteTextMap replaces markdown links according to the mapping
+// sortRewriteKeys makes overlapping mappings deterministic: the most specific
+// path or text wins, with lexical order breaking equal-length ties.
+func sortRewriteKeys(keys []string) {
+	sort.Slice(keys, func(i, j int) bool {
+		if len(keys[i]) != len(keys[j]) {
+			return len(keys[i]) > len(keys[j])
+		}
+		return keys[i] < keys[j]
+	})
+}
+
+// rewriteTextMap replaces markdown links according to the mapping.
 func rewriteTextMap(content string, linkMap map[string]string) string {
 	fmt.Printf("Rewriting %d links:\n", len(linkMap))
-	for old, new := range linkMap {
+	keys := make([]string, 0, len(linkMap))
+	for old := range linkMap {
+		keys = append(keys, old)
+	}
+	sortRewriteKeys(keys)
+	for _, old := range keys {
+		new := linkMap[old]
 		fmt.Printf("Replacing:  '%s' -> '%s'\n", old, new)
 		// Replace text if present anywhere
 		content = strings.ReplaceAll(content, old, new)
