@@ -15,11 +15,11 @@ type NotionHTTP struct {
 	Client  *http.Client
 }
 
-func NewNotionHTTP(token, version string) *NotionHTTP {
+func NewNotionHTTP(token, version string, client *http.Client) *NotionHTTP {
 	return &NotionHTTP{
 		Token:   token,
 		Version: version,
-		Client:  &http.Client{},
+		Client:  client,
 	}
 }
 
