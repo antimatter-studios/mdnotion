@@ -59,6 +59,41 @@ func TestLoadManifestNested(t *testing.T) {
 	}
 }
 
+func TestLoadManifestRejectsSiblingTargetsBeforePublishing(t *testing.T) {
+	for _, tc := range []struct {
+		name, manifest string
+	}{
+		{"explicit titles", `{"parent":"Docs","pages":[{"md":"$DIR/a.md","title":"Same"},{"md":"$DIR/b.md","title":"Same"}]}`},
+		{"derived titles", `{"parent":"Docs","pages":[{"md":"$DIR/a.md"},{"md":"$DIR/b.md"}]}`},
+		{"absolute pages", `{"pages":[{"md":"$DIR/a.md","page":"Docs/Same"},{"md":"$DIR/b.md","page":"Docs/Same"}]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := writeManifestFixture(t, tc.manifest, "a.md", "b.md")
+			if tc.name == "derived titles" {
+				for _, name := range []string{"a.md", "b.md"} {
+					if err := os.WriteFile(filepath.Join(filepath.Dir(path), name), []byte("# Same\n"), 0o644); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			_, _, err := loadManifest(path, nil)
+			if err == nil || !strings.Contains(err.Error(), "a.md") || !strings.Contains(err.Error(), "b.md") {
+				t.Fatalf("duplicate target error = %v", err)
+			}
+		})
+	}
+}
+
+func TestLoadManifestAllowsSameTitleBelowDifferentParents(t *testing.T) {
+	path := writeManifestFixture(t, `{"parent":"Docs","pages":[
+		{"title":"First","children":[{"md":"$DIR/a.md","title":"Same"}]},
+		{"title":"Second","children":[{"md":"$DIR/b.md","title":"Same"}]}
+	]}`, "a.md", "b.md")
+	if _, _, err := loadManifest(path, nil); err != nil {
+		t.Fatalf("independent sibling scopes rejected: %v", err)
+	}
+}
+
 func TestLoadManifestPageSet(t *testing.T) {
 	path := writeManifestFixture(t, `{
 		"pages": [
