@@ -186,6 +186,16 @@ func runManifest(client *NotionClient, opts ManifestOptions) error {
 		if err := executePlan(client, plan, parent); err != nil {
 			return err
 		}
+		// Validate every row's hash column before phase 2 mutates any page. A
+		// manifest may publish many rows in one database, so inspect its schema
+		// once rather than repeating the same API call for every document.
+		if !opts.Sync.Append {
+			for _, databaseID := range rowDatabases(plan) {
+				if err := client.RequireHashProperty(databaseID, hashPropertyName(opts.Sync.HashProperty)); err != nil {
+					return err
+				}
+			}
+		}
 	}
 
 	// Phase 2: rewrite links and publish content into each page.
@@ -210,6 +220,19 @@ func runManifest(client *NotionClient, opts ManifestOptions) error {
 	}
 
 	return nil
+}
+
+func rowDatabases(plan []*planNode) []string {
+	seen := make(map[string]bool)
+	var ids []string
+	for _, doc := range flattenPlan(plan) {
+		if doc.md == "" || !doc.target.row || seen[doc.target.databaseID] {
+			continue
+		}
+		seen[doc.target.databaseID] = true
+		ids = append(ids, doc.target.databaseID)
+	}
+	return ids
 }
 
 func executePlan(client *NotionClient, plan []*planNode, parent node) error {

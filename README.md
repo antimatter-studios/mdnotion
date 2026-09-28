@@ -29,7 +29,10 @@ Notion hierarchy is hardcoded anywhere.
   metadata code block at the end of plain pages. Re-publishing unchanged
   content does not touch the page at all (no version churn, no edited
   timestamps, no notifications). `--force` overrides; `--append` is
-  inherently non-idempotent and skips the hash logic.
+  inherently non-idempotent and skips the hash logic. Databases that receive
+  published rows must define `Content Hash` as a rich text property (or the
+  property named by `--hash-property`); publishing stops before page updates
+  when that column is missing or has another type.
 - **Dry-run makes no API calls at all.**
 
 ## Single page (CLI mode)
