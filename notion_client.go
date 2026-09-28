@@ -157,7 +157,7 @@ func (c *NotionClient) AddPageContent(pageID string, blocks []notion.Block) erro
 	return nil
 }
 
-// ClearPageContent deletes all child blocks of the given page
+// ClearPageContent removes published content while preserving nested pages and databases.
 func (c *NotionClient) ClearPageContent(pageID string) error {
 	ctx := context.Background()
 	startCursor := ""
@@ -167,6 +167,12 @@ func (c *NotionClient) ClearPageContent(pageID string) error {
 			return fmt.Errorf("failed to fetch children: %w", err)
 		}
 		for _, block := range resp.Results {
+			// A page that has both markdown and manifest children reaches here after the
+			// children have been created. Deleting their blocks trashes the pages.
+			switch block.(type) {
+			case *notion.ChildPageBlock, *notion.ChildDatabaseBlock:
+				continue
+			}
 			_, err := c.NotionClient.DeleteBlock(ctx, block.ID())
 			if err != nil {
 				return fmt.Errorf("failed to delete block %s: %w", block.ID(), err)
