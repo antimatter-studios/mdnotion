@@ -76,6 +76,13 @@ func loadManifest(path string, params map[string]string) (parentRef string, plan
 // buildPlan validates entries and resolves templates, titles, and content.
 func buildPlan(entries []Entry, params map[string]string, depth int) ([]*planNode, error) {
 	plan := make([]*planNode, 0, len(entries))
+	// findChildByTitle compares exact titles. Scope the same comparison to one
+	// parent's entries so two documents cannot overwrite one target page.
+	type firstEntry struct {
+		index int
+		md    string
+	}
+	seen := make(map[string]firstEntry)
 	for i, entry := range entries {
 		var n planNode
 		var err error
@@ -110,6 +117,16 @@ func buildPlan(entries []Entry, params map[string]string, depth int) ([]*planNod
 				return nil, fmt.Errorf("manifest entry %d needs a 'title' (no markdown heading to derive one from)", i)
 			}
 		}
+		key := "title:" + n.title
+		target := n.title
+		if n.page != "" {
+			key = "page:" + n.page
+			target = n.page
+		}
+		if first, exists := seen[key]; exists {
+			return nil, fmt.Errorf("manifest entries %d (%q) and %d (%q) both target %q below one parent", first.index, first.md, i, n.md, target)
+		}
+		seen[key] = firstEntry{index: i, md: n.md}
 
 		if n.children, err = buildPlan(entry.Children, params, depth+1); err != nil {
 			return nil, err
