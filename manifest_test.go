@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/brittonhayes/notionmd"
 )
 
 // writeManifestFixture writes a manifest plus any markdown files it needs and
@@ -145,6 +147,8 @@ func TestDeriveTitle(t *testing.T) {
 		want    string
 	}{
 		{"first H1", "docs/a.md", "intro\n\n# Real Title\n\n# Second\n", "Real Title"},
+		{"hash in fenced shell", "docs/a.md", "```bash\n# install deps\napt install foo\n```\n\n# Real Title\n", "Real Title"},
+		{"hash in tilde fence", "docs/a.md", "~~~bash\n# install deps\n~~~\n\n# Real Title\n", "Real Title"},
 		{"H2 is not a title", "docs/installation.md", "## Section\n", "installation"},
 		{"no heading falls back to file name", "docs/building.md", "plain text\n", "building"},
 		{"empty path and no heading", "", "text\n", ""},
@@ -155,6 +159,24 @@ func TestDeriveTitle(t *testing.T) {
 				t.Errorf("deriveTitle = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestDerivedTitleIsTheRemovedHeading(t *testing.T) {
+	content := "```bash\n# install deps\napt install foo\n```\n\n# Real Title\n\nbody\n"
+	blocks, err := notionmd.Convert(content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	removed, remaining := filterTitleBlock(blocks)
+	if got := deriveTitle("docs/a.md", []byte(content)); got != "Real Title" {
+		t.Fatalf("derived title = %q", got)
+	}
+	if removed == nil || len(remaining) != len(blocks)-1 {
+		t.Fatalf("expected exactly the real heading to be removed: %v blocks remain", len(remaining))
+	}
+	if _, heading := firstTitleBlock(remaining); heading != "" {
+		t.Fatalf("title heading remained in content: %q", heading)
 	}
 }
 

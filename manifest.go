@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/brittonhayes/notionmd"
 )
 
 // Manifest is a nested description of which markdown files go to which Notion
@@ -250,13 +252,14 @@ func printPlan(plan []*planNode, depth int) {
 	}
 }
 
-// deriveTitle returns the document's first H1, else the markdown file name,
-// else "".
+// deriveTitle returns the first converted H1, else the markdown file name,
+// else "". Using the same blocks as publication keeps fenced # comments out
+// of page identity and agrees with filterTitleBlock about which H1 is removed.
 func deriveTitle(mdPath string, content []byte) string {
-	for _, line := range strings.Split(string(content), "\n") {
-		trimmed := strings.TrimSpace(line)
-		if after, found := strings.CutPrefix(trimmed, "# "); found {
-			return strings.TrimSpace(after)
+	if blocks, err := notionmd.Convert(string(content)); err == nil {
+		_, title := firstTitleBlock(blocks)
+		if title != "" {
+			return title
 		}
 	}
 	if mdPath == "" {

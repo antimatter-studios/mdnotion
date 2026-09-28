@@ -276,13 +276,23 @@ func rewriteTextMap(content string, linkMap map[string]string) string {
 	return content
 }
 
-// filterTitleBlock checks if the first block is a title node, removes and returns it. Otherwise returns nil, blocks.
-func filterTitleBlock(blocks []notion.Block) (notion.Block, []notion.Block) {
-	if len(blocks) == 0 {
-		return nil, blocks
+// firstTitleBlock finds the first H1 in converted content. A fenced # line is
+// a code block here, so it cannot accidentally become the page's identity.
+func firstTitleBlock(blocks []notion.Block) (int, string) {
+	for i, block := range blocks {
+		if heading, ok := block.(notion.Heading1Block); ok {
+			if title := strings.TrimSpace(richTextPlain(heading.RichText)); title != "" {
+				return i, title
+			}
+		}
 	}
-	if _, ok := blocks[0].(notion.Heading1Block); ok {
-		return blocks[0], blocks[1:]
+	return -1, ""
+}
+
+// filterTitleBlock removes the same first H1 that deriveTitle uses for page identity.
+func filterTitleBlock(blocks []notion.Block) (notion.Block, []notion.Block) {
+	if i, _ := firstTitleBlock(blocks); i >= 0 {
+		return blocks[i], append(blocks[:i:i], blocks[i+1:]...)
 	}
 	return nil, blocks
 }
