@@ -34,7 +34,7 @@ func main() {
 		debugFlag    bool
 		version      bool
 	)
-	pflag.StringVar(&token, "token", "", "Notion integration token")
+	pflag.StringVar(&token, "token", "", "Notion integration token (defaults to NOTION_TOKEN)")
 	pflag.StringVar(&pageRef, "page", "", "Target Notion page: an ID or a title path like 'Wiki/Docs/Setup' (\\/ escapes a literal slash). Relative to --parent when both are given; must exist when given alone")
 	pflag.StringVar(&mdPath, "md", "", "Path to markdown file")
 	pflag.StringVar(&parentRef, "parent", "", "Page (ID or title path) below which the target is found or created. The parent itself must exist; everything below it may be created")
@@ -55,11 +55,12 @@ func main() {
 		fmt.Println(Version)
 		os.Exit(0)
 	}
+	token = resolveToken(token, os.Getenv("NOTION_TOKEN"))
 
 	debugEnabled = debugFlag
 
-	debugLog("Given: \n--token '%s' \n--page '%s' \n--md '%s' \n--parent '%s' \n--title '%s' \n--manifest '%s' \n--param %v \n--append '%t' \n--force '%t' \n--hash-property '%s' \n--rewrite-text '%s'\n",
-		token, pageRef, mdPath, parentRef, title, manifestPath, paramFlags, appendF, force, hashProperty, rewriteText)
+	debugLog("Given: \n--page '%s' \n--md '%s' \n--parent '%s' \n--title '%s' \n--manifest '%s' \n--param %v \n--append '%t' \n--force '%t' \n--hash-property '%s' \n--rewrite-text '%s'\n",
+		pageRef, mdPath, parentRef, title, manifestPath, paramFlags, appendF, force, hashProperty, rewriteText)
 
 	if appendF && replaceF {
 		fatalUsage("Cannot use both --append and --replace flags at the same time.")
@@ -88,7 +89,7 @@ func main() {
 	// Manifest mode: publish a set of documents.
 	if manifestPath != "" {
 		if token == "" {
-			fatalUsage("Manifest mode requires --token.")
+			fatalUsage("Manifest mode requires NOTION_TOKEN or --token.")
 		}
 		if pageRef != "" || mdPath != "" || title != "" {
 			fatalUsage("Cannot mix --manifest with --page/--md/--title.")
@@ -185,6 +186,13 @@ func main() {
 	if err := syncPage(notionClient, target, mdPath, mdContent, syncOpts); err != nil {
 		fatal(err)
 	}
+}
+
+func resolveToken(flagValue, envValue string) string {
+	if flagValue != "" {
+		return flagValue
+	}
+	return envValue
 }
 
 func fatal(err error) {
